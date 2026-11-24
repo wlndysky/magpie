@@ -442,6 +442,13 @@ the price is the own id's first (`ListPrice`). `TestModelIDListedAndAskedForByOw
 
 ## Constraints and failure behavior
 
+The provider editor's icon lookups and picture uploads belong to the editor
+that started them (`iconPicker` in [app.js](../../internal/gui/assets/app.js)).
+Saving does not wait for the site's automatic icon lookup. Once the editor
+has closed or been replaced, a late result or error is discarded; it cannot
+change another provider's icon. A typed image URL still finishes before Save.
+See [icon-url.test.cjs](../../internal/gui/tests/icon-url.test.cjs).
+
 An allowance deliberately not requested (a saved Claude account outside
 its card refresh, or allowances set to *When I ask*) can use the last
 reading with `readDeferred: true`. `AsOf` and `ReadAt` still date that

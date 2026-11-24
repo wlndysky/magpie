@@ -14,7 +14,7 @@ const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
 
-const assets = path.resolve(__dirname, "../assets");
+const assets = path.resolve(__dirname, process.env.MAGPIE_ICON_ASSETS || "../assets");
 const relay = {
   id: "relay", name: "My Relay", icon: "generic", host: "relay.example.com", chat: "https://relay.example.com/v1", responses: "", anthropic: "", catalog: "",
   models: [{ id: "gpt-5", name: "gpt-5", on: true }], chosen: ["gpt-5"],
@@ -24,8 +24,8 @@ const relay = {
 const ICON = { favicon: "file:00000000000000aa.png", url: "file:00000000000000bb.png", letter: "file:00000000000000cc.svg" };
 const FAILED = "the icon URL answered 404 Not Found";
 
-function serve(lang, posts) {
-  const providers = { providers: [relay], presets: [], excluded: [], gateway: { running: true, window: true } };
+function serve(lang, posts, relays = [relay], favicon = () => ({ icon: ICON.favicon })) {
+  const providers = { providers: relays, presets: [], excluded: [], gateway: { running: true, window: true } };
   const state = { agents: [], profiles: [], settings: { lang, theme: "light" } };
   return async (route) => {
     const req = route.request(), url = new URL(req.url());
@@ -36,9 +36,9 @@ function serve(lang, posts) {
     if (body && url.pathname.startsWith("/api/")) posts.push({ path: url.pathname, body });
     if (url.pathname === "/api/state") return json(state);
     if (url.pathname === "/api/plugins") return json({ plugins: [] });
-    if (url.pathname === "/api/providers") return json(providers);
+    if (url.pathname === "/api/providers" || url.pathname === "/api/provider/save") return json(providers);
     if (url.pathname === "/api/groups") return json({ groups: [] });
-    if (url.pathname === "/api/icons/favicon") return json({ icon: ICON.favicon });
+    if (url.pathname === "/api/icons/favicon") return json(await favicon(body));
     if (url.pathname === "/api/icons/url") {
       if (!body.url) return json({ icon: ICON.letter, failed: "" });
       return json(body.url.endsWith("/gone.png") ? { icon: ICON.letter, failed: FAILED } : { icon: ICON.url, failed: "" });
@@ -56,6 +56,60 @@ const KEYS = ["Get icon", "Automatic", "The site's own icon, looked for from the
   "The name's first letters on a coloured tile", "Image URL", "That picture couldn't be used, so the icon is the name's letters: {why}", "Icon"];
 
 for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {
+  test(`${engine}: a late automatic icon cannot change the next provider's saved icon`, async (t) => {
+    const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({ channel: "chromium" }));
+    const first = { ...relay, id: "first", name: "First Relay", host: "first.example.com", chat: "https://first.example.com/v1" };
+    const reply = Promise.withResolvers();
+    t.after(async () => { reply.resolve(); await browser.close(); });
+    const page = await browser.newPage({ viewport: { width: 1100, height: 760 }, reducedMotion: "reduce" });
+    page.setDefaultTimeout(5000);
+    const posts = [];
+    await page.route("**/*", serve("en", posts, [first, relay], async ({ url }) => {
+      if (url !== first.chat) return { icon: ICON.url };
+      await reply.promise;
+      return { icon: ICON.favicon };
+    }));
+    // Observe the first reply after api() has read its body and the picker has
+    // had a turn to apply it. Neither the network nor a sleep orders the saves.
+    await page.addInitScript((firstURL) => {
+      const fetch = window.fetch;
+      window.fetch = async (url, options) => {
+        const res = await fetch(url, options);
+        if (url === "/api/icons/favicon" && JSON.parse(options.body).url === firstURL) {
+          const text = res.text.bind(res);
+          res.text = async () => {
+            const body = await text();
+            setTimeout(() => { window.firstIconRead = true; }, 0);
+            return body;
+          };
+        }
+        return res;
+      };
+    }, first.chat);
+    await page.goto("http://magpie.test/?view=providers");
+    const editor = page.locator("#modal:not([hidden]) .editor");
+    const automatic = async (id) => {
+      await page.locator(`.row.provider[data-id="${id}"]`).click();
+      await editor.getByRole("button", { name: "Get icon" }).click();
+      await page.locator(".proto-menu").getByRole("menuitemradio", { name: /^Automatic/ }).click();
+    };
+    const save = async () => {
+      await editor.getByRole("button", { name: "Save", exact: true }).click();
+      await editor.waitFor({ state: "hidden" });
+    };
+    const firstRequest = page.waitForRequest((req) => req.url().endsWith("/api/icons/favicon") && req.postDataJSON().url === first.chat);
+    await automatic(first.id);
+    await firstRequest;
+    await save();
+    await automatic(relay.id);
+    await page.waitForFunction((icon) => document.querySelector("#modal .icon-now img")?.getAttribute("src")?.endsWith(icon), ICON.url.slice(5));
+    reply.resolve();
+    await page.waitForFunction(() => window.firstIconRead);
+    await save();
+    const saved = posts.filter(({ path }) => path === "/api/provider/save").map(({ body }) => [body.id, body.icon]);
+    assert.deepEqual(saved, [[first.id, "generic"], [relay.id, ICON.url]], "the first provider's icon reached a save after its editor closed");
+  });
+
   for (const width of [420, 1100]) {
     for (const lang of ["en", "zh", "zh-TW", "ja", "de"]) {
       test(`${engine} ${width} ${lang}: a custom provider's icon from an image URL or its letters`, async (t) => {

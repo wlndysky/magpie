@@ -8605,29 +8605,11 @@ const dot = (x, y) => `M${x - 1.4} ${y}a1.4 1.4 0 1 0 2.8 0a1.4 1.4 0 1 0 -2.8 0
 const FAN = [dot(2.9, 8), dot(13.1, 3.4), dot(13.1, 8), dot(13.1, 12.6),
   "M4.3 8h7.4", "M4.3 8c2.6 0 3.2-4.6 5.8-4.6h1.6", "M4.3 8c2.6 0 3.2 4.6 5.8 4.6h1.6"].join(" ");
 
-// Icons no preset uses, there to be picked for a provider of one's own
-// (Tom on X: Built-in icons 太少了): vendors' and platforms' marks from
-// lobehub/icons, as the presets' are.
-const MORE_ICONS = [
-  "ai21", "ai360-color", "alibaba-color", "alibabacloud-color", "anyscale-color", "aws",
-  "azureai-color", "baichuan-color", "baidu-color", "bailian-color", "baseten", "burncloud-color",
-  "bytedance-color", "cerebras", "chatglm-color", "chutes", "codebuddy-color", "cohere-color",
-  "cometapi-color", "copilot-color", "coze", "deepinfra-color", "deepmind-color", "doubao-color",
-  "featherless-color", "friendli", "gemma-color", "giteeai", "github", "glama", "gmicloud",
-  "google-color", "grok", "huawei-color", "huggingface-color", "hunyuan-color", "hyperbolic-color",
-  "iflytekcloud-color", "inference", "infinigence-color", "internlm-color", "jina", "kilocode",
-  "kling-color", "lambda", "leptonai-color", "liquid", "llmapi", "longcat", "metaai-color",
-  "microsoft-color", "monica-color", "morph-color", "nebius", "newapi-color", "nousresearch",
-  "nova-color", "novita-color", "openwebui", "parasail", "perplexity-color", "phala-color", "poe",
-  "ppio-color", "qiniu-color", "reka", "replicate", "roocode", "sambanova-color",
-  "sensenova-color", "snowflake-color", "sophnet-color", "spark-color", "straico-color",
-  "submodel-color", "targon-color", "tencent-color", "tiangong-color", "upstage-color",
-  "venice-color", "vertexai-color", "vllm-color", "voyage-color", "wenxin-color", "windsurf",
-  "workersai-color", "xiaomimimo", "xinference-color", "yi", "yuanbao-color", "zenmux", "zeroone"
-];
-
 function iconPicker(ed) {
+  const owner = draft;
   const box = el("div", "icon-pick");
+  // Saving or switching can close this editor while its icon is still on the way.
+  const current = () => draft === owner && box.isConnected;
   const draw = () => {
     box.replaceChildren();
     const now = el("span", "icon-now");
@@ -8646,6 +8628,7 @@ function iconPicker(ed) {
         let bin = "";
         for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
         const data = await api("icons", { data: btoa(bin) });
+        if (!current()) return;
         draft.icon = data.icon;
         draft.iconFrom = typed = "";
         asking = false;
@@ -8653,7 +8636,7 @@ function iconPicker(ed) {
         draw();
         syncHead();
       } catch (e) {
-        editorError(e.message);
+        if (current()) editorError(e.message);
       }
     };
     const choose = el("button", "text", t("Choose a picture…"));
@@ -8670,6 +8653,7 @@ function iconPicker(ed) {
       let note = "", kind = "warn", ok = false;
       try {
         const data = await api(path, { name: draft.name || "", ...body });
+        if (!current()) return false;
         draft.icon = data.icon;
         // a typed address only, not the base URL (Refeccd)
         const u = path === "icons/url" && body.url;
@@ -8678,6 +8662,7 @@ function iconPicker(ed) {
         if (!(asking = !!u)) typed = "";
         ok = !data.failed;
       } catch (e) {
+        if (!current()) return false;
         note = e.message;
         kind = "err";
       }
@@ -8704,7 +8689,17 @@ function iconPicker(ed) {
       }, "Icon");
     };
     const builtin = el("button", "text", t("Built-in icons"));
-    builtin.onclick = () => { open = !open; draw(); };
+    builtin.onclick = async () => {
+      if (!moreIcons) {
+        builtin.disabled = true;
+        try { moreIcons = (await import("./providericons.js")).MORE_ICONS; }
+        catch (e) { if (current()) editorError(e.message); return; }
+        finally { builtin.disabled = false; }
+        if (!current()) return;
+      }
+      open = !open;
+      draw();
+    };
     box.append(file, choose, site, builtin);
     if (draft.icon && draft.icon !== "generic") {
       const reset = el("button", "text", t("Default"));
@@ -8727,7 +8722,7 @@ function iconPicker(ed) {
     }
     if (open) {
       const grid = el("div", "icon-grid");
-      const names = [...new Set([...(providers.presets || []).map((p) => p.icon), ...MORE_ICONS].filter((n) => n && n !== "generic"))]
+      const names = [...new Set([...(providers.presets || []).map((p) => p.icon), ...moreIcons].filter((n) => n && n !== "generic"))]
         .sort((a, b) => a.replace(/-color$/, "").localeCompare(b.replace(/-color$/, "")));
       // well over a hundred of them: a vendor is found by its name
       const find = input(seek, t("Find an icon…"));
@@ -8749,6 +8744,7 @@ function iconPicker(ed) {
     }
   };
   let open = false, seek = "", asking = !!draft.iconFrom, typed = draft.iconFrom || "", pending = null;
+  let moreIcons;
   // the dialog's title shows the icon too
   const syncHead = () => {
     const old = ed.querySelector(".ehead .ic");
