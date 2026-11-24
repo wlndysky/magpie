@@ -16,6 +16,7 @@ import (
 	"golang.org/x/sys/windows"
 
 	"github.com/yetone/magpie/internal/settings"
+	"github.com/yetone/magpie/internal/shortcut"
 	"github.com/yetone/magpie/internal/update"
 )
 
@@ -30,12 +31,14 @@ import (
 // up. Unasked, a copy kept outside Downloads runs where it is and
 // nothing is recorded for it; one in Downloads installs as it did
 // before there was a question.
-func askInstallFolder() {
+// The returned function applies the desktop choice to a successful install.
+func askInstallFolder() func(string) {
 	if why := unanswerable(os.Getenv("CI"), visibleDesktop()); why != "" {
 		update.AskFolder = nil
 		log.Println("install: not asking where to install:", why)
-		return
+		return nil
 	}
+	var desktop bool
 	update.AskFolder = func(suggest string, check func(string) error) string {
 		w := installWordsFor(trayLang(settings.Shared().Lang, systemLang))
 		exe, err := update.Executable()
@@ -49,10 +52,17 @@ func askInstallFolder() {
 		go func() {
 			runtime.LockOSThread()
 			defer close(done)
-			out = installDialog(w, suggest, w.footer(exe), check)
+			out, desktop = installDialog(w, suggest, w.footer(exe), check)
 		}()
 		<-done
 		return out
+	}
+	return func(exe string) {
+		if desktop {
+			if err := shortcut.CreateDesktop(exe); err != nil {
+				log.Println("install: desktop shortcut:", err)
+			}
+		}
 	}
 }
 
@@ -64,21 +74,23 @@ const (
 // installDialog asks until the user installs in a folder check accepts,
 // or cancels (""), with footer under it all. With no dialog to be had,
 // dir is taken, as before there was a choice.
-func installDialog(w installWords, dir, footer string, check func(string) error) string {
+func installDialog(w installWords, dir, footer string, check func(string) error) (string, bool) {
 	note := ""
+	desktop := false
 	for {
-		btn, err := taskDialog(w, dir, note, footer)
+		btn, checked, err := taskDialog(w, dir, note, footer, desktop)
 		if err != nil {
 			log.Println("install: the folder dialog:", err)
-			return dir
+			return dir, false
 		}
+		desktop = checked
 		switch btn {
 		case idInstall:
 			if err := check(dir); err != nil {
 				note = w.refusal(dir, err)
 				continue
 			}
-			return dir
+			return dir, desktop
 		case idChange:
 			picked, err := pickInstallFolder(w.pick, dir)
 			if err != nil {
@@ -92,7 +104,7 @@ func installDialog(w installWords, dir, footer string, check func(string) error)
 				note = w.refusal(dir, err)
 			}
 		default:
-			return ""
+			return "", false
 		}
 	}
 }
@@ -127,11 +139,11 @@ var (
 // taskDialog shows Windows' task dialog (comctl32 6, which the exe's
 // manifest asks for): the folder under the question, Install, Change…
 // and Cancel, and note, a refusal, with a warning icon above; footer,
-// when there is one, in the dialog's footer. It answers the button
-// pressed.
-func taskDialog(w installWords, dir, note, footer string) (int, error) {
+// when there is one, in the dialog's footer. It answers the button pressed
+// and the verification checkbox's state.
+func taskDialog(w installWords, dir, note, footer string, desktop bool) (int, bool, error) {
 	if err := procTaskDialogIndi.Find(); err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	keep := [][]uint16{}
 	str := func(s string) uintptr {
@@ -156,6 +168,7 @@ func taskDialog(w installWords, dir, note, footer string) (int, error) {
 	}
 	const (
 		tdfAllowCancel = 0x0008
+		tdfChecked     = 0x0100     // TDF_VERIFICATION_FLAG_CHECKED
 		tdfSizeToFit   = 0x01000000 // TDF_SIZE_TO_CONTENT: a long folder isn't cut short
 		tdcbfCancel    = 0x0008
 		tdWarningIcon  = 0xFFFF // MAKEINTRESOURCEW(-1)
@@ -164,12 +177,16 @@ func taskDialog(w installWords, dir, note, footer string) (int, error) {
 	)
 	var mod windows.Handle
 	_ = windows.GetModuleHandleEx(0, nil, &mod)
-	show := func(icon uintptr) (int, uintptr) {
+	show := func(icon uintptr) (int, bool, uintptr) {
 		cfg := make([]byte, cfgSize)
 		le := binary.LittleEndian
 		le.PutUint32(cfg[0:], cfgSize)
 		le.PutUint64(cfg[12:], uint64(mod))
-		le.PutUint32(cfg[20:], tdfAllowCancel|tdfSizeToFit)
+		flags := uint32(tdfAllowCancel | tdfSizeToFit)
+		if desktop {
+			flags |= tdfChecked
+		}
+		le.PutUint32(cfg[20:], flags)
 		le.PutUint32(cfg[24:], tdcbfCancel)
 		le.PutUint64(cfg[28:], uint64(str(w.title)))
 		le.PutUint64(cfg[36:], uint64(icon))
@@ -178,29 +195,30 @@ func taskDialog(w installWords, dir, note, footer string) (int, error) {
 		le.PutUint32(cfg[60:], 2)
 		le.PutUint64(cfg[64:], uint64(uintptr(unsafe.Pointer(&buttons[0]))))
 		le.PutUint32(cfg[72:], idInstall)
+		le.PutUint64(cfg[92:], uint64(str(w.desktop))) // pszVerificationText
 		if footer != "" {
 			le.PutUint64(cfg[132:], uint64(str(footer))) // pszFooter
 		}
-		var pressed int32
-		hr, _, _ := procTaskDialogIndi.Call(uintptr(unsafe.Pointer(&cfg[0])), uintptr(unsafe.Pointer(&pressed)), 0, 0)
+		var pressed, checked int32
+		hr, _, _ := procTaskDialogIndi.Call(uintptr(unsafe.Pointer(&cfg[0])), uintptr(unsafe.Pointer(&pressed)), 0, uintptr(unsafe.Pointer(&checked)))
 		runtime.KeepAlive(cfg)
-		return int(pressed), hr
+		return int(pressed), checked != 0, hr
 	}
 	icon := uintptr(appIcon)
 	if note != "" {
 		icon = tdWarningIcon
 	}
-	pressed, hr := show(icon)
+	pressed, checked, hr := show(icon)
 	if hr != 0 && icon == appIcon {
 		// a build without the icon in its resources
-		pressed, hr = show(0)
+		pressed, checked, hr = show(0)
 	}
 	runtime.KeepAlive(keep)
 	runtime.KeepAlive(buttons)
 	if hr != 0 {
-		return 0, syscall.Errno(hr)
+		return 0, false, syscall.Errno(hr)
 	}
-	return pressed, nil
+	return pressed, checked, nil
 }
 
 // pickInstallFolder is Windows' folder picker (IFileOpenDialog with

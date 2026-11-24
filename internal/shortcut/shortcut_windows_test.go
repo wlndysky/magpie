@@ -36,6 +36,31 @@ func TestWrite(t *testing.T) {
 	}
 }
 
+func TestCreateDesktopLink(t *testing.T) {
+	dir := t.TempDir()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := createDesktopLink(dir, exe); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, Name+".lnk")
+	if changed, err := write(link, exe); changed || err != nil {
+		t.Fatalf("desktop link did not already open %s in its folder: changed=%v, err=%v", exe, changed, err)
+	}
+	want, err := os.ReadFile(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := createDesktopLink(dir, filepath.Join(dir, "other.exe")); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(link); err != nil || string(got) != string(want) {
+		t.Fatalf("existing link changed: %v", err)
+	}
+}
+
 // magpie is in Installed apps (Jevik_AI on X deleted it by hand, which
 // runs no code, and Codex kept pointing at a gateway that was gone): the
 // entry opens this exe's Uninstall, follows an exe that moved, goes with

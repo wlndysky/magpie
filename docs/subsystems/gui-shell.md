@@ -1501,6 +1501,11 @@ named that already (`update.InstallDir`). The default is
 `%LOCALAPPDATA%\Programs\magpie`; another folder is recorded at
 `HKCU\Software\magpie` `InstallLocation`, so the next exe downloaded
 replaces the copy there without asking (feng_21795_78266 on Discord).
+The dialog's *Create a desktop shortcut* box starts unchecked. When checked,
+install creates `Magpie.lnk` on the current user's Windows Desktop known
+folder, pointing to the installed exe. It leaves an existing `Magpie.lnk`
+alone. Cancel, unattended install and later updates do not create one. The
+Start menu shortcut still follows its own first-start rules.
 A folder only an administrator can write to (Program Files, Windows) or
 one downloads land in is refused in the dialog (`update.Installable`), not
 elevated: magpie is installed for the user alone (HKCU's Run, the user's
