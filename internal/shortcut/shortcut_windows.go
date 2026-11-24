@@ -97,6 +97,51 @@ func startMenuLink() (string, error) {
 
 func writeShortcut(lnk, exe string) (bool, error) { return write(lnk, exe) }
 
+// CreateDesktop adds a shortcut for an explicitly requested installation.
+// It is not part of Ensure, so updates never restore a deleted desktop link.
+func CreateDesktop(exe string) error {
+	dir, err := windows.KnownFolderPath(windows.FOLDERID_Desktop, 0)
+	if err != nil {
+		return err
+	}
+	if dir == "" {
+		return errors.New("no desktop folder")
+	}
+	return createDesktopLink(dir, exe)
+}
+
+func createDesktopLink(dir, exe string) error {
+	link := filepath.Join(dir, Name+".lnk")
+	if _, err := os.Lstat(link); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	stage, err := os.MkdirTemp(dir, ".magpie-shortcut-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(stage)
+	tmp := filepath.Join(stage, Name+".lnk")
+	if _, err := write(tmp, exe); err != nil {
+		return err
+	}
+	from, err := windows.UTF16PtrFromString(tmp)
+	if err != nil {
+		return err
+	}
+	to, err := windows.UTF16PtrFromString(link)
+	if err != nil {
+		return err
+	}
+	// Unlike os.Rename on Windows, MoveFile leaves an existing link alone.
+	err = windows.MoveFile(from, to)
+	if errors.Is(err, windows.ERROR_ALREADY_EXISTS) || errors.Is(err, windows.ERROR_FILE_EXISTS) {
+		return nil
+	}
+	return err
+}
+
 // programs is the user's Start menu Programs folder.
 func programs() (string, error) {
 	if p, err := windows.KnownFolderPath(windows.FOLDERID_Programs, windows.KF_FLAG_CREATE); err == nil && p != "" {

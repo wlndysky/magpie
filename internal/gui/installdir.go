@@ -26,6 +26,7 @@ type installWords struct {
 	title, ask, install, change, pick string
 	admin, downloads, failed          string
 	keep                              string
+	desktop                           string
 }
 
 var installText = map[string]installWords{
@@ -36,6 +37,7 @@ var installText = map[string]installWords{
 		downloads: "Downloads land in %s. Choose another folder.",
 		failed:    "magpie can't be installed in %s: %v",
 		keep:      "Once magpie is installed, you can delete %s.",
+		desktop:   "Create a desktop shortcut",
 	},
 	"zh": {
 		title: "magpie", ask: "把 magpie 安装到这个文件夹？", install: "安装", change: "更改…",
@@ -44,6 +46,7 @@ var installText = map[string]installWords{
 		downloads: "%s 是下载存放的地方，请选择另一个文件夹。",
 		failed:    "magpie 无法安装到 %s：%v",
 		keep:      "安装完成后，可以删除 %s。",
+		desktop:   "创建桌面快捷方式",
 	},
 	"zh-TW": {
 		title: "magpie", ask: "把 magpie 安裝到這個資料夾？", install: "安裝", change: "變更…",
@@ -52,6 +55,7 @@ var installText = map[string]installWords{
 		downloads: "%s 是下載存放的地方，請選擇另一個資料夾。",
 		failed:    "magpie 無法安裝到 %s：%v",
 		keep:      "安裝完成後，可以刪除 %s。",
+		desktop:   "建立桌面捷徑",
 	},
 	"ja": {
 		title: "magpie", ask: "このフォルダーに magpie をインストールしますか？", install: "インストール", change: "変更…",
@@ -60,6 +64,7 @@ var installText = map[string]installWords{
 		downloads: "%s はダウンロードの保存先です。別のフォルダーを選んでください。",
 		failed:    "%s に magpie をインストールできません：%v",
 		keep:      "インストール後は %s を削除してかまいません。",
+		desktop:   "デスクトップにショートカットを作成する",
 	},
 	"de": {
 		title: "magpie", ask: "magpie in diesem Ordner installieren?", install: "Installieren", change: "Ändern…",
@@ -68,6 +73,7 @@ var installText = map[string]installWords{
 		downloads: "In %s landen Downloads. Wählen Sie einen anderen Ordner.",
 		failed:    "magpie kann nicht in %s installiert werden: %v",
 		keep:      "Nach der Installation können Sie %s löschen.",
+		desktop:   "Desktopverknüpfung erstellen",
 	},
 }
 

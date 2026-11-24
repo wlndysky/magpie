@@ -343,8 +343,11 @@ func Run(version string, showMain bool, link string) error {
 	// opens the copy installed in the user's programs folder, putting
 	// itself there first, and Open at login opens that one from now on.
 	// The first time, it asks where (installdir_windows.go).
-	askInstallFolder()
+	finishInstall := askInstallFolder()
 	if from, to := update.Settle(); to != "" {
+		if finishInstall != nil {
+			finishInstall(to)
+		}
 		err := update.Forward(from, to)
 		if err == nil {
 			if err := autostart.Repoint(from, to); err != nil {
